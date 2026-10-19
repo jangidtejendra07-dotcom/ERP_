@@ -1,6 +1,6 @@
 import { ValidationError } from "./errors";
 import { cleanCategory, newFieldFor, rand } from "./categories";
-import { randomCode, validate, type Snapshot } from "./products";
+import { isRealDate, randomCode, validate, type Snapshot } from "./products";
 import {
   FILTERABLE_TYPES,
   type Category,
@@ -41,9 +41,12 @@ const FALSE_WORDS = ["no", "n", "false", "0", "nahi", "na"];
 
 function toIsoDate(c: ImportCell): string | null {
   const s = String(c).trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (isRealDate(s)) return s;
   const m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/); // dd/mm/yyyy (India)
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  if (m) {
+    const iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+    return isRealDate(iso) ? iso : null; // 31/02/2026 jaisi galat date null
+  }
   return null;
 }
 

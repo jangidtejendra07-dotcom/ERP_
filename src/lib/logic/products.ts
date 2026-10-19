@@ -15,6 +15,13 @@ const cents = (n: number) => Math.round(n * 100);
 const money = (n: number) => cents(n) / 100;
 export const randomCode = (len: number) => crypto.randomUUID().replace(/-/g, "").slice(0, len).toUpperCase();
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Asli date hai ya nahi (31/02 jaisi galat date pakadne ke liye)
+export function isRealDate(s: string): boolean {
+  if (!DATE_RE.test(s)) return false;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
 const localToday = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -93,7 +100,7 @@ function cleanCustom(
         break;
       }
       case "date": {
-        if (typeof raw !== "string" || !DATE_RE.test(raw) || Number.isNaN(new Date(raw).getTime())) {
+        if (typeof raw !== "string" || !isRealDate(raw)) {
           throw new ValidationError(`${f.label} must be a valid date`);
         }
         out[f.key] = raw;
@@ -189,7 +196,7 @@ export function validate(input: ProductInput, db: Snapshot, existing?: Pick<Prod
   if (dup) throw new ValidationError(`SKU "${sku}" already exists`);
 
   const receivedAt = typeof input.receivedAt === "string" && input.receivedAt.trim() ? input.receivedAt.trim() : (existing as { receivedAt?: string } | undefined)?.receivedAt ?? localToday();
-  if (!DATE_RE.test(receivedAt) || Number.isNaN(new Date(receivedAt).getTime())) {
+  if (!isRealDate(receivedAt)) {
     throw new ValidationError("Maal aane ki date sahi nahi hai");
   }
   if (receivedAt > localToday()) throw new ValidationError("Maal aane ki date aaj se aage ki nahi ho sakti");

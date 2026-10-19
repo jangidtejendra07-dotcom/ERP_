@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Box, DollarSign, Package, ShoppingCart, Store, TrendingUp, XCircle } from "lucide-react";
 import StatCard from "@/components/dashboard/StatCard";
 import HowItWorks from "@/components/ui/HowItWorks";
 import ProductStatusBadge from "@/components/product/ProductStatusBadge";
-import { getDashboardStats, type DashboardStats } from "@/features/dashboard/dashboard.service";
-import { fetchCategories } from "@/features/categories/categories.service";
-import { fetchProducts, type ProductList } from "@/features/inventory/inventory.service";
+import { DASHBOARD_KEY, getDashboardStats } from "@/features/dashboard/dashboard.service";
+import { CATEGORIES_KEY, fetchCategories } from "@/features/categories/categories.service";
+import { fetchProducts, productsKey, type ProductList } from "@/features/inventory/inventory.service";
+import { useLoad } from "@/lib/useLoad";
 import { formatCurrency } from "@/lib/utils";
-import type { CategoryView } from "@/types/category";
 import type { ProductView } from "@/types/product";
 
 // Product ke custom columns ko chhoti line me dikhata hai: "Brand: Apple · Storage: 128GB"
@@ -31,15 +30,12 @@ function customSummary(p: ProductView, list: ProductList["categories"]): string 
 }
 
 export default function DashboardPage() {
-  const [s, setS] = useState<DashboardStats | null>(null);
-  const [data, setData] = useState<ProductList | null>(null);
-  const [cats, setCats] = useState<CategoryView[]>([]);
-
-  useEffect(() => {
-    getDashboardStats().then(setS);
-    fetchProducts().then(setData).catch(() => setData(null));
-    fetchCategories().then(setCats).catch(() => setCats([]));
-  }, []);
+  const { data: statsData } = useLoad(DASHBOARD_KEY, getDashboardStats);
+  const { data: productData } = useLoad(productsKey({}), () => fetchProducts());
+  const { data: catData } = useLoad(CATEGORIES_KEY, fetchCategories);
+  const s = statsData ?? null;
+  const data = productData ?? null;
+  const cats = catData ?? [];
 
   if (!s) return <p className="text-sm text-slate-500">Loading...</p>;
 

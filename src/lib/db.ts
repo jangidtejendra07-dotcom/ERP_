@@ -23,12 +23,15 @@ function friendly(e: PostgrestError): string {
   }
   if (/JWT|expired/i.test(m)) return "Session khatam ho gaya, dobara login karo";
   if (/Failed to fetch|NetworkError/i.test(m)) return "Internet / Supabase se connection nahi ho paya";
-  return m;
+  return [m, e.details, e.hint].filter(Boolean).join(" | ");
 }
 
 // Supabase ka jawab kholta hai; error ho to saaf message ke saath throw
 export function unwrap<T>(res: { data: T; error: PostgrestError | null }): T {
-  if (res.error) throw new Error(friendly(res.error));
+  if (res.error) {
+    console.error("Supabase error:", res.error);
+    throw new Error(friendly(res.error));
+  }
   return res.data;
 }
 

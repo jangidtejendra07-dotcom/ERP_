@@ -1,186 +1,206 @@
 "use client";
 
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Box, DollarSign, Package, ShoppingCart, Store, TrendingUp, XCircle } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { AlertTriangle, Box, CheckCircle2, FileSpreadsheet, IndianRupee, Package, Plus, Truck, XCircle } from "lucide-react";
 import StatCard from "@/components/dashboard/StatCard";
 import HowItWorks from "@/components/ui/HowItWorks";
-import ProductStatusBadge from "@/components/product/ProductStatusBadge";
-import { DASHBOARD_KEY, getDashboardStats } from "@/features/dashboard/dashboard.service";
-import { CATEGORIES_KEY, fetchCategories } from "@/features/categories/categories.service";
-import { fetchProducts, productsKey, type ProductList } from "@/features/inventory/inventory.service";
+import LowStockAlert from "@/components/product/LowStockAlert";
+import ProductFilters from "@/components/product/ProductFilters";
+import ProductTable from "@/components/product/ProductTable";
+import { deleteProduct, fetchProducts, productsKey } from "@/features/inventory/inventory.service";
+import { fetchVendors } from "@/features/vendors/vendors.service";
 import { useLoad } from "@/lib/useLoad";
 import { formatCurrency } from "@/lib/utils";
-import type { ProductView } from "@/types/product";
+import type { ProductFilter, ProductView } from "@/types/product";
 
-// Product ke custom columns ko chhoti line me dikhata hai: "Brand: Apple · Storage: 128GB"
-function customSummary(p: ProductView, list: ProductList["categories"]): string {
-  const cat = list.find((c) => c.id === p.categoryId);
-  if (!cat) return "";
-  return cat.fields
-    .filter((f) => f.isActive && f.showInTable)
-    .map((f) => {
-      const v = p.custom[f.key];
-      if (v === undefined || v === null || v === "") return null;
-      const text = Array.isArray(v) ? v.join("/") : v === true ? "Yes" : v === false ? "No" : String(v);
-      return `${f.label}: ${text}`;
-    })
-    .filter(Boolean)
-    .slice(0, 4)
-    .join(" · ");
-}
+function InventoryContent() {
+  const router = useRouter();
+  const params = useSearchParams();
 
-export default function DashboardPage() {
-  const { data: statsData } = useLoad(DASHBOARD_KEY, getDashboardStats);
-  const { data: productData } = useLoad(productsKey({}), () => fetchProducts());
-  const { data: catData } = useLoad(CATEGORIES_KEY, fetchCategories);
-  const s = statsData ?? null;
-  const data = productData ?? null;
-  const cats = catData ?? [];
+  const [filter, setFilter] = useState<ProductFilter>({
+    type: "all",
+    status: (["in_stock", "low_stock", "out_of_stock"].includes(params.get("status") ?? "")
+      ? params.get("status")
+      : "all") as ProductFilter["status"],
+    categoryId: params.get("categoryId") ?? undefined,
+    branchId: params.get("branchId") ?? undefined,
+    custom: {},
+  });
+  const [search, setSearch] = useState("");
+  const [actionError, setError] = useState("");
+  const [notice, setNotice] = useState<{ kind: "added" | "updated"; name: string; cat: string; branch: string } | null>(null);
 
-  if (!s) return <p className="text-sm text-slate-500">Loading...</p>;
+  useEffect(() => {
+    const added = params.get("added");
+    const updated = params.get("updated");
+    if (added || updated) {
+      setNotice({
+        kind: added ? "added" : "updated",
+        name: (added ?? updated) as string,
+        cat: params.get("cat") ?? "",
+        branch: params.get("branch") ?? "",
+      });
+      router.replace("/inventory"); // refresh par notice dobara na aaye
+    }
+  }, [params, router]);
 
-  const recent = (data?.products ?? []).slice(0, 8); // API pehle se nayi-se-purani sort deti hai
-  const attention = (data?.products ?? []).filter((p) => p.status !== "in_stock").slice(0, 8);
+  const { data: vendorList } = useLoad("vendors", fetchVendors);
+  const vendors = vendorList ?? [];
+
+  // search debounce: type karte waqt har key par API na jaye
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const query = { ...filter, q: debounced };
+  const { data: loaded, error: loadError, reload, mutate } = useLoad(productsKey(query), () => fetchProducts(query));
+  const data = loaded ?? null;
+  const error = actionError || loadError;
+
+  const category = data?.categories.find((c) => c.id === filter.categoryId);
+  const columns = useMemo(
+    () => (category?.fields ?? []).filter((f) => f.isActive && f.showInTable),
+    [category]
+  );
+
+  async function onDelete(p: ProductView) {
+    if (!window.confirm(`"${p.name}" ko delete karna hai? Ye wapas nahi aayega.`)) return;
+    mutate((d) => ({ ...d, products: d.products.filter((x) => x.id !== p.id) })); // turant hatao
+    try {
+      await deleteProduct(p.id);
+      setError("");
+      reload(); // counts / stock value chupke se taaza
+    } catch (e) {
+      setError((e as Error).message);
+      reload();
+    }
+  }
+
+  const s = data?.stats;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Inventory Overview</h1>
-        <p className="text-sm text-slate-500">Last updated: {new Date().toLocaleTimeString()}</p>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Inventory</h1>
+          <p className="text-sm text-slate-500">Apna aur consignment (vendor ka) saara maal ek jagah.</p>
+        </div>
+        <div className="flex gap-2">
+          <Link
+            href="/inventory/import"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileSpreadsheet size={16} /> Import Excel
+          </Link>
+          <Link
+            href="/inventory/new"
+            className="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+          >
+            <Plus size={16} /> New Product
+          </Link>
+        </div>
       </div>
+
+      {notice && (
+        <div className="flex gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+          <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-green-600" />
+          <div className="flex-1 space-y-1.5">
+            <p className="font-semibold">
+              &quot;{notice.name}&quot; {notice.kind === "added" ? "add ho gaya" : "update ho gaya"}.
+            </p>
+            <p>Ab ye product yaha-yaha dikhega:</p>
+            <ul className="list-inside list-disc space-y-0.5 text-green-800">
+              <li>Neeche Inventory list me{notice.cat && ` (category: ${notice.cat})`}{notice.branch && ` (branch: ${notice.branch})`}.</li>
+              <li>Dashboard me Total Products, Stock Value aur Low/Out of Stock ginti me.</li>
+              <li>Branches page me us branch ke products, units aur stock value me.</li>
+              <li>Categories page me us category ke product count me.</li>
+              <li>Sales / Credit Sales me bechte waqt product list me (stock hone par).</li>
+            </ul>
+          </div>
+          <button onClick={() => setNotice(null)} className="self-start text-xs text-green-700 hover:underline">
+            Close
+          </button>
+        </div>
+      )}
 
       <HowItWorks
-        id="dashboard"
-        title="Dashboard kya dikhata hai"
+        id="inventory"
+        title="Inventory kaise use karein (pehli baar padhein)"
         steps={[
-          "Upar ke cards me aapka poora hisaab hai: kitni bikri hui, kitne products hain, stock ki value, low/out of stock.",
-          "'Recently added products' me jo bhi product abhi judta hai (+ New Product ya Import Excel se) sabse upar dikhta hai, uske category wale columns ke saath.",
-          "'Needs restock' me wo products hain jinka stock kam ya khatam hai. Naam par click karke stock badlo.",
-          "'Category-wise stock' me har category ke products, units aur alerts hain. 'View' dabake us category ki poori list kholo.",
+          "Pehle Branches page par kam se kam ek branch banao (jaha maal rakha hai) aur Categories page par category banao (jaise Phones, Clothes, Books). Category ke apne columns bhi wahi bante hain.",
+          "Ek-ek product jodna ho to upar '+ New Product' dabao: naam, category, branch, cost/selling price, quantity bharo. Category ke custom columns apne-aap form me aa jayenge.",
+          "Poori Excel file ek saath jodni ho to '+ New Product' ki jagah 'Import Excel' dabao: file upload karo, columns match karo, preview dekho, confirm karo. (Ye feature agla step hai.)",
+          "Product add / import hone ke baad yahi list me dikhta hai. Search, category, branch, stock level aur category ke custom filters se dhundo.",
+          "Low stock ho to peela alert aata hai. Stock kam hone par 'View low stock' dabake sirf wahi products dekho.",
+          "Product ke naam par click karke edit karo. Delete karne se pehle confirm poochha jata hai.",
         ]}
         appearsIn={[
-          "Naya product ya import hote hi ye saari lists aur cards apne-aap naye ho jate hain.",
-          "Bikri hone par stock ghatta hai aur Total Sales / Profit badhta hai.",
+          "Dashboard: Total Products, Stock Value, Low Stock, Out of Stock.",
+          "Branches: har branch ke products, units, stock value.",
+          "Categories: har category ke products aur low/out count.",
+          "Sales / Credit Sales: sirf in-stock product bech sakte ho; bikne par quantity ghat jati hai.",
         ]}
+        note="Internal = apna kharida hua maal (stock value me ginta hai). Consignment = vendor ka maal (stock value me nahi ginta, bikne par vendor ko hisaab dena hota hai)."
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <StatCard title="Total Sales" value={String(s.totalSales)} note={`${formatCurrency(s.revenue)} revenue`} noteTone="green" icon={ShoppingCart} iconClass="bg-green-50 text-green-600" />
-        <StatCard title="Total Products" value={String(s.totalProducts)} note={`${s.internalProducts} Internal · ${s.externalProducts} External`} icon={Box} iconClass="bg-indigo-50 text-indigo-600" />
-        <StatCard title="Total Vendors" value={String(s.vendors)} icon={Store} iconClass="bg-purple-50 text-purple-600" />
-        <StatCard title="Low Stock" value={`${s.lowStock} Products`} note="ACTION NEEDED" noteTone="red" icon={AlertTriangle} iconClass="bg-amber-50 text-amber-500" />
-        <StatCard title="Out of Stock" value={`${s.outOfStock} Products`} note="Requires restocking" icon={XCircle} iconClass="bg-red-50 text-red-500" />
-      </div>
+      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <StatCard title="Total Cost (COGS)" value={formatCurrency(s.cogs)} note="Cost of goods sold" icon={DollarSign} iconClass="bg-orange-50 text-orange-500" />
-        <StatCard title="Total Profit" value={formatCurrency(s.profit)} note={`+${s.margin}% margin`} noteTone="green" icon={TrendingUp} iconClass="bg-green-50 text-green-600" />
-        <StatCard title="Stock Value" value={formatCurrency(s.stockValue)} note="Current inventory value" icon={Package} iconClass="bg-blue-50 text-blue-600" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between px-5 pt-4">
-            <h2 className="font-semibold">Recently added products</h2>
-            <Link href="/inventory" className="text-sm text-brand-600 hover:underline">View all</Link>
-          </div>
-          {!data ? (
-            <p className="p-5 text-sm text-slate-500">Loading...</p>
-          ) : recent.length === 0 ? (
-            <p className="p-5 text-sm text-slate-500">
-              Abhi koi product nahi. <Link href="/inventory/new" className="text-brand-600 underline">+ New Product</Link> ya{" "}
-              <Link href="/inventory/import" className="text-brand-600 underline">Import Excel</Link>.
-            </p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {recent.map((p) => (
-                <li key={p.id} className="flex items-start justify-between gap-3 px-5 py-3 text-sm">
-                  <div className="min-w-0">
-                    <Link href={`/inventory/${encodeURIComponent(p.id)}`} className="font-medium text-brand-600 hover:underline">{p.name}</Link>
-                    <p className="text-xs text-slate-400">{p.category} · {p.branchName ?? "—"}</p>
-                    {data && customSummary(p, data.categories) && (
-                      <p className="mt-0.5 truncate text-xs text-slate-500">{customSummary(p, data.categories)}</p>
-                    )}
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="font-medium">{formatCurrency(p.sellingPrice)}</p>
-                    <p className="text-xs text-slate-400">Stock {p.quantity}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between px-5 pt-4">
-            <h2 className="font-semibold">Needs restock</h2>
-            <Link href="/inventory?status=low_stock" className="text-sm text-brand-600 hover:underline">Inventory</Link>
-          </div>
-          {!data ? (
-            <p className="p-5 text-sm text-slate-500">Loading...</p>
-          ) : attention.length === 0 ? (
-            <p className="p-5 text-sm text-slate-500">Sab products ka stock theek hai.</p>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {attention.map((p) => (
-                <li key={p.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
-                  <div className="min-w-0">
-                    <Link href={`/inventory/${encodeURIComponent(p.id)}`} className="font-medium text-brand-600 hover:underline">{p.name}</Link>
-                    <p className="text-xs text-slate-400">{p.category} · {p.branchName ?? "—"}</p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <span className="text-xs text-slate-500">{p.quantity} left</span>
-                    <ProductStatusBadge status={p.status} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-
-      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="px-5 pt-4">
-          <h2 className="font-semibold">Category-wise stock</h2>
+      {s && (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
+          <StatCard title="Total Products" value={String(s.total)} icon={Box} iconClass="bg-indigo-50 text-indigo-600" />
+          <StatCard title="Internal / Consignment" value={`${s.internal} / ${s.external}`} icon={Truck} iconClass="bg-purple-50 text-purple-600" />
+          <StatCard title="Low Stock" value={String(s.lowStock)} icon={AlertTriangle} iconClass="bg-amber-50 text-amber-500" />
+          <StatCard title="Out of Stock" value={String(s.outOfStock)} icon={XCircle} iconClass="bg-red-50 text-red-500" />
+          <StatCard title="Stock Value" value={formatCurrency(s.stockValue)} note="sirf internal, cost par" icon={IndianRupee} iconClass="bg-blue-50 text-blue-600" />
         </div>
-        {cats.length === 0 ? (
-          <p className="p-5 text-sm text-slate-500">Abhi koi category nahi.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="text-xs uppercase text-slate-400">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Category</th>
-                  <th className="px-5 py-3 font-medium">Columns</th>
-                  <th className="px-5 py-3 text-right font-medium">Products</th>
-                  <th className="px-5 py-3 text-right font-medium">Units</th>
-                  <th className="px-5 py-3 text-right font-medium">Low</th>
-                  <th className="px-5 py-3 text-right font-medium">Out</th>
-                  <th className="px-5 py-3 text-right font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {cats.map((c) => (
-                  <tr key={c.id} className="border-t border-slate-100">
-                    <td className="px-5 py-3 font-medium">{c.name}</td>
-                    <td className="px-5 py-3 text-xs text-slate-500">
-                      {c.fields.filter((f) => f.isActive).map((f) => f.label).join(", ") || "—"}
-                    </td>
-                    <td className="px-5 py-3 text-right">{c.productCount}</td>
-                    <td className="px-5 py-3 text-right">{c.units}</td>
-                    <td className="px-5 py-3 text-right text-amber-600">{c.lowStock}</td>
-                    <td className="px-5 py-3 text-right text-red-500">{c.outOfStock}</td>
-                    <td className="px-5 py-3 text-right">
-                      <Link href={`/inventory?categoryId=${encodeURIComponent(c.id)}`} className="text-brand-600 hover:underline">View</Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      )}
+
+      {s && (
+        <LowStockAlert
+          lowStock={s.lowStock}
+          outOfStock={s.outOfStock}
+          onShowLow={() => setFilter({ ...filter, status: "low_stock" })}
+          onShowOut={() => setFilter({ ...filter, status: "out_of_stock" })}
+        />
+      )}
+
+      <ProductFilters
+        value={filter}
+        search={search}
+        categories={data?.categories ?? []}
+        branches={data?.branches ?? []}
+        vendors={vendors}
+        onSearch={setSearch}
+        onChange={setFilter}
+      />
+
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        {!data ? (
+          <p className="p-6 text-sm text-slate-500">Loading...</p>
+        ) : data.products.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 p-10 text-center text-sm text-slate-500">
+            <Package size={32} className="text-slate-300" />
+            <p>Koi product nahi mila.</p>
+            <p className="max-w-md text-xs">
+              Naya product jodne ke liye &quot;+ New Product&quot; dabao, ya poori Excel ke liye &quot;Import Excel&quot;. Filters lage hain to &quot;Clear all&quot; try karo.
+            </p>
           </div>
+        ) : (
+          <ProductTable products={data.products} columns={columns} showCategory={!filter.categoryId} onDelete={onDelete} />
         )}
-      </section>
+      </div>
     </div>
+  );
+}
+
+export default function InventoryPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-slate-500">Loading...</p>}>
+      <InventoryContent />
+    </Suspense>
   );
 }
